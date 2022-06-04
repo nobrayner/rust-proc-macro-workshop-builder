@@ -50,7 +50,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
                 });
 
                 struct_fields.push(quote! {
-                    #ident: self.#ident.unwrap()
+                    #ident: self.#ident.take().unwrap()
                 });
             }
 
@@ -67,7 +67,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
                 }
                 impl #builder_ident {
                     #(#functions)*
-                    pub fn build(mut self) -> Result<#struct_ident, Box<dyn std::error::Error>> {
+                    pub fn build(&mut self) -> Result<#struct_ident, Box<dyn std::error::Error>> {
                         #(#checks)*
 
                         Ok(#struct_ident {
