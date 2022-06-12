@@ -35,7 +35,7 @@ fn expand_builder(
 ) -> TokenStream2 {
     let builder_ident = format_ident!("{}Builder", struct_ident);
 
-    let (initial_values, declarations, functions, checks, struct_fields) = expand_fields(fields);
+    let (initial_values, declarations, functions, return_fields) = expand_fields(fields);
 
     quote! {
         impl #struct_ident {
@@ -51,10 +51,8 @@ fn expand_builder(
         impl #builder_ident {
             #(#functions)*
             pub fn build(&mut self) -> Result<#struct_ident, Box<dyn std::error::Error>> {
-                #(#checks)*
-
                 Ok(#struct_ident {
-                    #(#struct_fields),*
+                    #(#return_fields),*
                 })
             }
         }
@@ -63,31 +61,29 @@ fn expand_builder(
 
 fn expand_fields(
     fields: syn::punctuated::Punctuated<syn::Field, syn::token::Comma>,
-) -> (VecTok, VecTok, VecTok, VecTok, VecTok) {
+) -> (VecTok, VecTok, VecTok, VecTok) {
     let mut initial_values: Vec<TokenStream2> = vec![];
     let mut declarations: Vec<TokenStream2> = vec![];
     let mut functions: Vec<TokenStream2> = vec![];
-    let mut checks: Vec<TokenStream2> = vec![];
-    let mut struct_fields: Vec<TokenStream2> = vec![];
+    let mut return_fields: Vec<TokenStream2> = vec![];
 
     for field in fields.iter() {
+        let optional_generic = get_optional_generic(field);
+
         initial_values.push(expand_initial_value(field));
 
-        declarations.push(expand_declaration(field));
+        declarations.push(expand_declaration(field, optional_generic));
 
-        functions.push(expand_function(field));
+        functions.push(expand_function(field, optional_generic));
 
-        checks.push(expand_check(field));
-
-        struct_fields.push(expand_struct_field(field));
+        return_fields.push(expand_return_field(field, optional_generic));
     }
 
     (
         initial_values,
         declarations,
         functions,
-        checks,
-        struct_fields,
+        return_fields,
     )
 }
 
@@ -99,7 +95,7 @@ fn expand_initial_value(field: &syn::Field) -> TokenStream2 {
     }
 }
 
-fn expand_declaration(field: &syn::Field) -> TokenStream2 {
+fn expand_declaration(field: &syn::Field, optional_generic: Option<&syn::Type>) -> TokenStream2 {
     let syn::Field {
         vis,
         ident,
@@ -108,13 +104,25 @@ fn expand_declaration(field: &syn::Field) -> TokenStream2 {
         ..
     } = field;
 
+    let ty = if let Some(inner_ty) = optional_generic {
+        quote! { Option<#inner_ty> }
+    } else {
+        quote! { Option<#ty> }
+    };
+
     quote! {
-        #vis #ident #colon_token Option<#ty>
+        #vis #ident #colon_token #ty
     }
 }
 
-fn expand_function(field: &syn::Field) -> TokenStream2 {
+fn expand_function(field: &syn::Field, optional_generic: Option<&syn::Type>) -> TokenStream2 {
     let syn::Field { ident, ty, .. } = field;
+
+    let ty = if let Some(inner_ty) = optional_generic {
+        quote! { #inner_ty }
+    } else {
+        quote! { #ty }
+    };
 
     quote! {
         fn #ident(&mut self, #ident: #ty) -> &mut Self {
@@ -124,22 +132,46 @@ fn expand_function(field: &syn::Field) -> TokenStream2 {
     }
 }
 
-fn expand_check(field: &syn::Field) -> TokenStream2 {
+fn expand_return_field(field: &syn::Field, optional_generic: Option<&syn::Type>) -> TokenStream2 {
     let syn::Field { ident, .. } = field;
 
-    let error_message = format!("Must provide {}", ident.as_ref().unwrap());
+    if let Some(_) = optional_generic {
+        quote! {
+            #ident: self.#ident.take(),
+        }
+    } else {
+        let error_message = format!("Must provide {}", ident.as_ref().unwrap());
 
-    quote! {
-        if let None = self.#ident {
-            return Err(Box::from(#error_message));
+        quote! {
+            #ident: self.#ident.take().ok_or(#error_message)?
         }
     }
 }
 
-fn expand_struct_field(field: &syn::Field) -> TokenStream2 {
-    let syn::Field { ident, .. } = field;
+fn get_optional_generic(field: &syn::Field) -> Option<&syn::Type> {
+    match &field.ty {
+        syn::Type::Path(syn::TypePath {
+            qself: None,
+            path: syn::Path { segments, .. },
+        }) => match segments.iter().collect::<Vec<_>>().as_slice() {
+            [segment] => {
+                if segment.ident != "Option" {
+                    return None;
+                };
 
-    quote! {
-        #ident: self.#ident.take().unwrap()
+                return match &segment.arguments {
+                    syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments {
+                        args,
+                        ..
+                    }) => match args.iter().collect::<Vec<_>>().as_slice() {
+                        [syn::GenericArgument::Type(ty)] => Some(ty),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+            }
+            _ => None,
+        },
+        _ => None,
     }
 }
