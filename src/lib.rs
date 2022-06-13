@@ -49,7 +49,7 @@ fn expand_builder(
         }
         impl #builder_ident {
             #(#functions)*
-            pub fn build(&mut self) -> Result<#struct_ident, Box<dyn std::error::Error>> {
+            pub fn build(&mut self) -> std::result::Result<#struct_ident, std::boxed::Box<dyn std::error::Error>> {
                 Ok(#struct_ident {
                     #(#return_fields),*
                 })
@@ -99,9 +99,9 @@ fn expand_declaration(field: &syn::Field, optional_generic: Option<&syn::Type>) 
     } = field;
 
     let ty = if let Some(inner_ty) = optional_generic {
-        quote! { Option<#inner_ty> }
+        quote! { std::option::Option<#inner_ty> }
     } else {
-        quote! { Option<#ty> }
+        quote! { std::option::Option<#ty> }
     };
 
     quote! {
@@ -127,7 +127,7 @@ fn expand_function(
 
         quote! {
             fn #name(&mut self, #ident: #ty) -> &mut Self {
-                self.#ident = Some(#ident);
+                self.#ident = std::option::Option::Some(#ident);
                 self
             }
         }
@@ -151,10 +151,10 @@ fn expand_function(
 
             Ok(quote! {
                 fn #singular_ident(&mut self, #singular_ident: #vec_generic) -> &mut Self {
-                    if let Some(vec) = self.#ident.as_mut() {
+                    if let std::option::Option::Some(vec) = self.#ident.as_mut() {
                         vec.push(#singular_ident);
                     } else {
-                        self.#ident = Some(vec![#singular_ident]);
+                        self.#ident = std::option::Option::Some(vec![#singular_ident]);
                     }
 
                     self
